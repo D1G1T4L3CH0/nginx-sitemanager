@@ -20,7 +20,7 @@ This script simplifies the process of managing NGINX sites by providing a comman
 ```bash
 ./nginx-sm.sh --enable example.com     # Enable the site example.com
 ./nginx-sm.sh --list                   # List all available sites
-./nginx-sm.sh -edit example.com        # Edit the configuration of example.com
+./nginx-sm.sh --edit example.com        # Edit the configuration of example.com
 ```
 
 ## 📚 Dependencies
