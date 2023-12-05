@@ -32,6 +32,12 @@
 #   - NGINX web server must be installed and running.
 #   - The script requires sudo privileges to modify NGINX configuration files.
 #
+# Global Exit Codes:
+#   0 - Success, the operation completed successfully.
+#   1 - General error, such as a missing site configuration or invalid command.
+#   2 - Operation cancelled by the user.
+#   3 - Nginx configuration test failed (specific to enable_site command).
+#
 # Copyright (c) [2023] [nobody]
 # Licensed under the MIT License.
 ################################################################################
@@ -122,13 +128,34 @@ show_help() {
 # Enable a specified site by creating a symbolic link in the sites-enabled directory
 enable_site() {
     local site=$1
-    if [ ! -e "$sitesAvail/$site" ]; then
+    local site_avail_path="$sitesAvail/$site"
+    local site_enabled_path="$sitesEnabled/$site"
+
+    if [ ! -e "$site_avail_path" ]; then
         echo "Site does not appear to exist."
-    elif [ -e "$sitesEnabled/$site" ]; then
+        return 1
+    fi
+
+    if [ -e "$site_enabled_path" ]; then
         echo "Site appears to already be enabled."
+        return 2
+    fi
+
+    check_sudo
+
+    # Enable the site by creating a symbolic link
+    ln -s "$site_avail_path" "$site_enabled_path"
+
+    # Now check the configuration after enabling the site
+    if nginx -t; then
+        echo "Configuration test passed. Reloading Nginx."
+        nginx -s reload
+        echo "Site enabled and Nginx reloaded."
     else
-        ln -s "$sitesAvail/$site" "$sitesEnabled/$site"
-        echo "Site enabled."
+        # If the configuration test fails, remove the symbolic link to revert the change
+        echo "Configuration test failed. Disabling the site."
+        rm "$site_enabled_path"
+        return 3
     fi
 }
 
@@ -138,6 +165,7 @@ disable_site() {
     if [ ! -e "$sitesEnabled/$site" ]; then
         echo "Site does not appear to be enabled."
     else
+        check_sudo
         rm "$sitesEnabled/$site"
         echo "Site disabled."
     fi
@@ -214,29 +242,39 @@ create_site() {
     fi
 }
 
+# Remove a specified site
 remove_site() {
     local site=$1
+    local site_avail_path="$sitesAvail/$site"
+    local site_enabled_path="$sitesEnabled/$site"
 
-    # Check if the site configuration file exists
-    if [[ ! -e "$sitesAvail/$site" ]]; then
+    if [[ ! -e "$site_avail_path" && ! -L "$site_enabled_path" ]]; then
         echo "Site does not appear to exist."
         return 1
     fi
 
-    # Ask the user if they are sure to remove the site with a default answer of 'no'
-    read -r -p "Are you sure you want to remove $site? [yes/no]: " -i "no" answer
+    check_sudo
 
-    # Convert the answer to lowercase and compare to 'yes'
-    if [[ ${answer,,} == "yes" ]]; then
-        # Ensure the user has administrative privileges
-        check_sudo
-
-        # Remove the site configuration file
-        rm "$sitesAvail/$site"
-        echo "Site removed."
-    else
-        echo "Site removal canceled."
+    echo "You are about to remove the site: $site"
+    read -r -p "Type 'yes' to confirm: " confirmation
+    if [[ $confirmation != "yes" ]]; then
+        echo "Site removal cancelled."
+        return 2
     fi
+
+    # Remove enabled site symlink if it exists
+    if [ -L "$site_enabled_path" ]; then
+        rm "$site_enabled_path"
+        echo "Removed symlink from $site_enabled_path."
+    fi
+
+    # Remove available site file if it exists
+    if [ -e "$site_avail_path" ]; then
+        rm "$site_avail_path"
+        echo "Removed file from $site_avail_path."
+    fi
+
+    echo "Site $site removed successfully."
 }
 
 # Check if the string contains only spaces

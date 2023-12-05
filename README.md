@@ -32,6 +32,15 @@ This script simplifies the process of managing NGINX sites by providing a comman
 - NGINX web server must be installed and running.
 - The script requires sudo privileges to modify NGINX configuration files.
 
+## Exit Codes
+
+The script uses the following exit codes to indicate the result of an operation:
+
+- `0`: Success - The operation completed successfully.
+- `1`: General error - For example, site configuration file not found, or the specified site does not exist in either available or enabled directories.
+- `2`: User cancellation - The user aborted the operation (specific to the `remove_site` command).
+- `3`: Nginx configuration test failed - This is specific to the `enable_site` command and indicates that Nginx has failed the configuration test after attempting to enable a site.
+
 ---
 
 Copyright (c) 2023 nobody
