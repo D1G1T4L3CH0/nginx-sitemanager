@@ -1,179 +1,260 @@
 #!/bin/bash
 
-##
-#  File:
-#    nginx-modsite
-#  Description:
-#    Provides a basic script to automate enabling and disabling websites found
-#    in the default configuration directories:
-#      /etc/nginx/sites-available and /etc/nginx/sites-enabled
-#    For easy access to this script, copy it into the directory:
-#      /usr/local/sbin
-#    Run this script without any arguments or with -h or --help to see a basic
-#    help dialog displaying all options.
-##
+#!/bin/bash
 
-# Copyright (C) 2010 Michael Lustfield <mtecknology@ubuntu.com>, 2016 Andrew Salkeld (ajsalkeld) <andrew@ajsalkeld.com>
-
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions
-# are met:
-# 1. Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-# 2. Redistributions in binary form must reproduce the above copyright
-#    notice, this list of conditions and the following disclaimer in the
-#    documentation and/or other materials provided with the distribution.
+################################################################################
+# NGINX - Site Manager
 #
-# THIS SOFTWARE IS PROVIDED BY AUTHOR AND CONTRIBUTORS ``AS IS'' AND
-# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-# ARE DISCLAIMED.  IN NO EVENT SHALL AUTHOR OR CONTRIBUTORS BE LIABLE
-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
-# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
-# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
-# SUCH DAMAGE.
+# This script manages NGINX sites, providing functionality for enabling/disabling,
+# listing, and editing site configurations. It simplifies the process of managing
+# NGINX sites by providing a command-line interface for common operations.
+#
+# Usage:
+#   ./nginx-sm.sh [options]
+#
+# Options:
+#   -e, --enable   Enable a site by enabling its configuration file.
+#   -d, --disable  Disable a site by disabling its configuration file.
+#   -l, --list     List all available sites and their status.
+#   -ed, --edit    Edit the configuration file of a site.
+#
+# Examples:
+#   ./nginx-sm.sh --enable example.com     # Enable the site example.com
+#   ./nginx-sm.sh --list                   # List all available sites
+#   ./nginx-sm.sh --edit example.com        # Edit the configuration of example.com
+#
+# Dependencies:
+#   - NGINX web server must be installed and running.
+#   - The script requires sudo privileges to modify NGINX configuration files.
+#
+# Copyright (c) [2023] [nobody]
+# Licensed under the MIT License.
+################################################################################
 
-##
-# Default Settings
-##
+# MIT License
 
-NGINX_CONF_FILE="$(awk -F= -v RS=' ' '/conf-path/ {print $2}' <<< $(nginx -V 2>&1))"
-NGINX_CONF_DIR="${NGINX_CONF_FILE%/*}"
-NGINX_SITES_AVAILABLE="$NGINX_CONF_DIR/sites-available"
-NGINX_SITES_ENABLED="$NGINX_CONF_DIR/sites-enabled"
-SELECTED_SITE="$2"
+# Copyright (c) [2023] [nobody]
 
-##
-# Script Functions
-##
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
 
-ngx_enable_site() {
-	[[ ! "$SELECTED_SITE" ]] &&
-		ngx_select_site "not_enabled"
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
 
-	[[ ! -e "$NGINX_SITES_AVAILABLE/$SELECTED_SITE" ]] &&
-		ngx_error "Site does not appear to exist."
-	[[ -e "$NGINX_SITES_ENABLED/$SELECTED_SITE" ]] &&
-		ngx_error "Site appears to already be enabled"
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 
-	ln -sf "$NGINX_SITES_AVAILABLE/$SELECTED_SITE" "$NGINX_SITES_ENABLED/$SELECTED_SITE"
-	ngx_reload
+declare -g site_to_enable=""
+declare -g site_to_disable=""
+declare -g site_to_edit=""
+declare -g list_sites=false
+declare -g display_help=false
+declare -g editor="nano"
+
+# Fetch NGINX configuration directories
+get_config_dirs() {
+    if ! command -v nginx >/dev/null 2>&1; then
+        echo "Error: nginx command not found."
+        exit 1
+    fi
+
+    local confFile=$(nginx -V 2>&1 | grep -o 'conf-path=[^ ]*' | cut -d= -f2)
+    local confDir=$(dirname "$confFile")
+    declare -g sitesAvail="$confDir/sites-available"
+    declare -g sitesEnabled="$confDir/sites-enabled"
+
+    if [ ! -d "$sitesAvail" ] || [ ! -d "$sitesEnabled" ]; then
+        echo "Error: Unable to find NGINX sites-available or sites-enabled directory."
+        exit 1
+    fi
 }
 
-ngx_disable_site() {
-	[[ ! "$SELECTED_SITE" ]] &&
-		ngx_select_site "is_enabled"
-
-	[[ ! -e "$NGINX_SITES_AVAILABLE/$SELECTED_SITE" ]] &&
-		ngx_error "Site does not appear to be \'available\'. - Not Removing"
-	[[ ! -e "$NGINX_SITES_ENABLED/$SELECTED_SITE" ]] &&
-		ngx_error "Site does not appear to be enabled."
-
-	rm -f "$NGINX_SITES_ENABLED/$SELECTED_SITE"
-	ngx_reload
+# Initialize variables
+initialize_variables() {
+    site_to_enable=""
+    site_to_disable=""
+    site_to_edit=""
+    list_sites=false
+    display_help=false
+    editor="nano"
 }
 
-ngx_edit_site() {
-	[[ ! "$SELECTED_SITE" ]] &&
-		ngx_select_site "not_enabled"
-
-	[[ ! -e "$NGINX_SITES_AVAILABLE/$SELECTED_SITE" ]] &&
-		ngx_error "Site does not appear to exist."
-		
-	nano "$NGINX_SITES_AVAILABLE/$SELECTED_SITE"
+# Check if script was run using sudo for options that require it
+check_sudo() {
+    if [[ $EUID -ne 0 ]]; then
+        echo "Please run this script with sudo or as root."
+        exit 1
+    fi
 }
 
-ngx_list_site() {
-	echo "Available sites:"
-	ngx_sites "available"
-	echo "Enabled Sites"
-	ngx_sites "enabled"
+# Display help for script usage
+show_help() {
+    echo -e "\nnginx Site Manager"
+    echo -e "Usage: $(basename "$0") [options] <site>\n"
+    echo -e "Options:"
+    echo -e "\t-e, --enable <site>:   Enable site"
+    echo -e "\t-d, --disable <site>:  Disable site"
+    echo -e "\t-l, --list:            List sites"
+    echo -e "\t-ed, --edit <site>:    Edit site"
+    echo -e "\t--editor <editor>:     Set editor"
+    echo -e "\t-h, --help:            Display help"
+    echo -e "\n"
 }
 
-##
-# Helper Functions
-##
-
-ngx_select_site() {
-	sites_avail=($NGINX_SITES_AVAILABLE/*)
-	sa="${sites_avail[@]##*/}"
-	sites_en=($NGINX_SITES_ENABLED/*)
-	se="${sites_en[@]##*/}"
-
-	case "$1" in
-		not_enabled) sites=$(comm -13 <(printf "%s\n" $se) <(printf "%s\n" $sa));;
-		is_enabled) sites=$(comm -12 <(printf "%s\n" $se) <(printf "%s\n" $sa));;
-	esac
-
-	ngx_prompt "$sites"
+# Enable a specified site by creating a symbolic link in the sites-enabled directory
+enable_site() {
+    local site=$1
+    if [ ! -e "$sitesAvail/$site" ]; then
+        echo "Site does not appear to exist."
+    elif [ -e "$sitesEnabled/$site" ]; then
+        echo "Site appears to already be enabled."
+    else
+        ln -s "$sitesAvail/$site" "$sitesEnabled/$site"
+        echo "Site enabled."
+    fi
 }
 
-ngx_prompt() {
-	sites=($1)
-	i=0
-
-	echo "SELECT A WEBSITE:"
-	for site in ${sites[@]}; do
-		echo -e "$i:\t${sites[$i]}"
-		((i++))
-	done
-
-	read -p "Enter number for website: " i
-	SELECTED_SITE="${sites[$i]}"
+# Disable a specified site by removing the symbolic link in the sites-enabled directory
+disable_site() {
+    local site=$1
+    if [ ! -e "$sitesEnabled/$site" ]; then
+        echo "Site does not appear to be enabled."
+    else
+        rm "$sitesEnabled/$site"
+        echo "Site disabled."
+    fi
 }
 
-ngx_sites() {
-	case "$1" in
-		available) dir="$NGINX_SITES_AVAILABLE";;
-		enabled) dir="$NGINX_SITES_ENABLED";;
-	esac
+# List all available and enabled sites
+list_sites() {
+    echo "Available sites (not enabled):"
+    for site in "$sitesAvail"/*; do
+        local site=$(basename "$site")
+        if [ ! -e "$sitesEnabled/$site" ]; then
+            echo -e "\t$site"
+        fi
+    done
 
-	for file in $dir/*; do
-		echo -e "\t${file#*$dir/}"
-	done
+    echo -e "\nEnabled sites:"
+    for site in "$sitesEnabled"/*; do
+        echo -e "\t$(basename "$site")"
+    done
 }
 
-ngx_reload() {
-	read -p "Would you like to reload the Nginx configuration now? (Y/n) " reload
-    [[ "$reload" != "n" && "$reload" != "N" ]] && invoke-rc.d nginx reload
+# Check if the editor is available
+check_editor() {
+    if ! command -v $1 >/dev/null 2>&1; then
+        echo "Editor $1 not found."
+        return 1
+    fi
+    return 0
 }
 
-ngx_reload_now() {
-	invoke-rc.d nginx reload
+# Edit a specified site using the preferred editor
+edit_site() {
+    local site=$1
+    if [ ! -e "$sitesAvail/$site" ]; then
+        echo "Site does not appear to exist."
+    else
+        $editor "$sitesAvail/$site"
+    fi
 }
 
-ngx_error() {
-	echo -e "${0##*/}: ERROR: $1"
-	[[ "$2" ]] && ngx_help
-	exit 1
+parse_arguments() {
+    while [ "$#" -gt 0 ]; do
+        local key="$1"
+        case "$key" in
+            -e|--enable)
+                if [ -z "$2" ]; then
+                    echo "No site specified to enable. Use -h for help."
+                    exit 1
+                fi
+                check_sudo
+                site_to_enable="$2"
+                shift
+                ;;
+            -d|--disable)
+                if [ -z "$2" ]; then
+                    echo "No site specified to disable. Use -h for help."
+                    exit 1
+                fi
+                check_sudo
+                site_to_disable="$2"
+                shift
+                ;;
+            -ed|--edit)
+                if [ -z "$2" ]; then
+                    echo "No site specified to edit. Use -h for help."
+                    exit 1
+                fi
+                check_sudo
+                site_to_edit="$2"
+                shift
+                ;;
+            --editor)
+                if [ -z "$2" ]; then
+                    echo "No editor specified. Use -h for help."
+                    exit 1
+                fi
+                editor="$2"
+                shift
+                ;;
+            -l|--list)
+                list_sites=true
+                ;;
+            -h|--help)
+                display_help=true
+                ;;
+            *)
+                echo "Unknown option: $key"
+                exit 1
+                ;;
+        esac
+        shift
+    done
 }
 
-ngx_help() {
-	echo "Usage: ${0##*/} [options]"
-	echo "Options:"
-	echo -e "\t<-e|--enable> <site>\tEnable site"
-	echo -e "\t<-d|--disable> <site>\tDisable site"
-	echo -e "\t<-x|--edit>\t\tEdit site"
-	echo -e "\t<-l|--list>\t\tList sites"
-	echo -e "\t<-h|--help>\t\tDisplay help"
-	echo -e "\n\tIf <site> is left out a selection of options will be presented."
-	echo -e "\tIt is assumed you are using the default sites-enabled and"
-	echo -e "\tsites-disabled located at $NGINX_CONF_DIR."
+# Main function
+main() {
+    initialize_variables
+    parse_arguments "$@"
+    get_config_dirs
+
+    if [ -z "$1" ]; then
+        display_help=true
+    fi
+
+    if $display_help; then
+        if [ -n "$site_to_enable" ] || [ -n "$site_to_disable" ] || [ -n "$site_to_edit" ] || $list_sites; then
+            echo "Warning: --help was provided along with other options. Ignoring other options."
+        fi
+        show_help
+        exit 0
+    fi
+
+    if check_editor "$editor"; then
+        if [ -n "$site_to_enable" ]; then
+            enable_site "$site_to_enable"
+        fi
+        if [ -n "$site_to_disable" ]; then
+            disable_site "$site_to_disable"
+        fi
+        if [ -n "$site_to_edit" ]; then
+            edit_site "$site_to_edit"
+        fi
+        if $list_sites; then
+            list_sites
+        fi
+    fi
 }
 
-##
-# Core Piece
-##
-
-case "$1" in
-	-e|--enable)	ngx_enable_site;;
-	-d|--disable)	ngx_disable_site;;
-	-x|--edit)	ngx_edit_site;;
-	-r|--reload) ngx_reload_now;;
-	-l|--list)	ngx_list_site;;
-	-h|--help)	ngx_help;;
-	*)		ngx_error "No Options Selected" 1; ngx_help;;
-esac
+main "$@"
