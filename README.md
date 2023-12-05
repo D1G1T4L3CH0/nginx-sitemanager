@@ -1,6 +1,6 @@
 # 🚀 NGINX - Site Manager
 
-This script simplifies the process of managing NGINX sites by providing a command-line interface for common operations such as enabling/disabling, listing, and editing site configurations.
+This script simplifies the process of managing NGINX sites by providing a command-line interface for common operations such as enabling/disabling, listing, and editing site configurations. This script was designed for Ubuntu. If you want to modify it to make it work for other flavors as well, feel free.
 
 ## 🛠️ Usage
 
